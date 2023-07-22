@@ -5,14 +5,14 @@ from diffusers import StableDiffusionPipeline
 import utils
 
 # Primary hyperparameters
-ETA = 1 # η
+η = 1
 T_SKIP = 36
 N_DIFFUSION_STEPS = 100
 
 DEVICE = "mps"
 MODEL_ID = "CompVis/stable-diffusion-v1-4"
-CFG_SRC = 3.5
-CFG_TGT = 15
+CFG_SCALE_SRC = 3.5
+CFG_SCALE_TGT = 15
 INITIAL_IMAGE = "horse_mud.jpg"
 PROMPT_SRC = "a photo of a horse in the mud"
 PROMPT_TGT = "a photo of a horse in the snow"
@@ -50,37 +50,39 @@ def embed_prompt(prompt):
 # TODO: note that timesteps is not guaranteed to be in order, verify this works as expected
 
 N_LATENT_DIMS = pipe.unet.config.sample_size
-alpha_bar = pipe.scheduler.alphas_cumprod
-
-xts = torch.zeros(
-    (N_DIFFUSION_STEPS, pipe.unet.config.in_channels, N_LATENT_DIMS, N_LATENT_DIMS)
+LATENT_SPACE = (
+    N_DIFFUSION_STEPS,
+    pipe.unet.config.in_channels,
+    N_LATENT_DIMS,
+    N_LATENT_DIMS,
 )
-for i, t in enumerate(pipe.scheduler.timesteps):
+ᾱs = pipe.scheduler.alphas_cumprod
+ts = pipe.scheduler.timesteps
+
+xts = torch.zeros(LATENT_SPACE)
+for i, t in enumerate(ts):
     # See equation 2, this is the crux of the algorithm
     Ɛ̃ = torch.rand_like(x0, device=DEVICE)
-    xts[i] = torch.sqrt(alpha_bar[t]) * x0 + torch.sqrt(1 - alpha_bar[t]) * Ɛ̃
+    xts[i] = torch.sqrt(ᾱs[t]) * x0 + torch.sqrt(1 - ᾱs[t]) * Ɛ̃
 
-# Initialize latents
-l = torch.randn(
-    (1, pipe.unet.config.in_channels, N_LATENT_DIMS, N_LATENT_DIMS), generator=rng
-).to(DEVICE)
-l *= pipe.scheduler.init_noise_sigma
-
-zs = torch.zeros_like(xts)
-for i, t in enumerate(pipe.scheduler.timesteps):
+zs = torch.zeros(LATENT_SPACE)
+embedding = embed_prompt(PROMPT_SRC)
+for i, t in enumerate(ts):
     i_prev = i + 1
-    xt = xts[i].unsqueeze(0)
-    # Scale the initial noise by the variance required by the scheduler
-    latent_model_input = torch.cat([l] * 3)
-    latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, t)
-    chunks = pipe.unet(x0).chunk(2)
-    noise_pred_cond, noise_pred_uncond = chunks
-    noise_pred = noise_pred_uncond + CFG_SRC * (noise_pred_cond - noise_pred_uncond)
+    t_prev = ts[i_prev]
+
+    xt = 
+    noise_preds = pipe.unet(x0, t, embedding)
+    noise_pred_cond, noise_pred_uncond = noise_preds.chunk(2)
+
+    # Classifier-free guidance
+    diff = noise_pred_cond - noise_pred_uncond
+    noise_pred = noise_pred_uncond + CFG_SCALE_SRC * diff
     xt_minus_1 = xts[i_prev].unsqueeze(0)
-    x0_pred = (xt - torch.sqrt(1-alpha_bar[t]) * noise_pred)
+    x0_pred = xts[i].unsqueeze(0) - torch.sqrt(1 - ᾱs[t]) * noise_pred
 
     # Equation 4
-    mu_xt = torch.sqrt(alpha_bar[t+1]) + ...
+    mu_xt = torch.sqrt(ᾱs[t + 1]) + ...
     variance_t = ...
 
     zt = (xt_minus_1 - mu_xt) / torch.sqrt(variance_t)
